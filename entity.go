@@ -36,7 +36,6 @@ type RedisConn struct {
 }
 
 type RedisResp struct {
-	rType byte
-	rData [][]byte
-	rLen  int
+	rType byte     // 回复类型(+-:$*)
+	rData [][]byte // 从TCP连接中读取的数据统一使用二维数组返回
 }
