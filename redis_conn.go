@@ -61,87 +61,103 @@ func (conn *RedisConn) Call(params ...interface{}) (*RedisResp, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.rType == '-' {
+		return resp, resp.ParseError()
+	}
 	return resp, nil
 }
 
 func (conn *RedisConn) getReply() (*RedisResp, error) {
-	bt := make([]byte, 1)
-	bf := bytes.Buffer{}
-	_, err := conn.TcpConn.Read(bt)
+	b := make([]byte, 1)
+	_, err := conn.TcpConn.Read(b)
 	if err != nil {
 		return nil, err
 	}
-	bf.Write(bt)
-	switch bt[0] {
+	resp := new(RedisResp)
+	resp.rType = b[0]
+	switch b[0] {
 	case '+':
+		// 状态回复
 		fallthrough
 	case '-':
+		// 错误回复
 		fallthrough
 	case ':':
-		// 读取一行
+		// 整数回复
+		singleResp := make([]byte, 1)
 		for {
-			_, err := conn.TcpConn.Read(bt)
+			_, err := conn.TcpConn.Read(b)
 			if err != nil {
 				return nil, err
 			}
-			bf.Write(bt)
-			if bt[0] == '\n' {
+			if b[0] != '\r' && b[0] != '\n' {
+				singleResp = append(singleResp, b[0])
+			}
+			if b[0] == '\n' {
 				break
 			}
 		}
+		resp.rData = append(resp.rData, singleResp)
 	case '$':
-		// 读取两行
-		line := 0
-		for {
-			_, err := conn.TcpConn.Read(bt)
-			if err != nil {
-				return nil, err
-			}
-			bf.Write(bt)
-			if bt[0] == '\n' {
-				line += 1
-				if line == 2 {
-					break
-				}
-			}
-		}
-	case '*':
-		numBuf := bytes.Buffer{}
-		for {
-			_, err := conn.TcpConn.Read(bt)
-			if err != nil {
-				return nil, err
-			}
-			bf.Write(bt)
-			if bt[0] != '\r' && bt[0] != '\n' {
-				numBuf.Write(bt)
-			}
-			if bt[0] == '\n' {
-				break
-			}
-		}
-		num, err := strconv.Atoi(numBuf.String())
+		buck, err := conn.readBuck()
 		if err != nil {
 			return nil, err
 		}
-		line := 0
+		resp.rData = append(resp.rData, buck)
+	case '*':
+		// 条目数量
+		itemNum := 0
 		for {
-			_, err := conn.TcpConn.Read(bt)
+			_, err := conn.TcpConn.Read(b)
 			if err != nil {
 				return nil, err
 			}
-			bf.Write(bt)
-			if bt[0] == '\n' {
-				line += 1
-				if line == num*2 {
-					break
-				}
+			if b[0] == '\r' {
+				continue
 			}
+			if b[0] == '\n' {
+				break
+			}
+			itemNum = itemNum*10 + int(b[0]-'0')
+		}
+		for i := 0; i < itemNum; i++ {
+			buck, err := conn.readBuck()
+			if err != nil {
+				return nil, err
+			}
+			resp.rData = append(resp.rData, buck)
 		}
 	default:
 		return nil, errors.New("错误的服务器回复")
 	}
-	return &RedisResp{respData: bf.Bytes(), respLen: bf.Len()}, nil
+	return resp, nil
+}
+
+func (conn *RedisConn) readBuck() ([]byte, error) {
+	b := make([]byte, 1)
+	dataLen := 0
+	for {
+		_, err := conn.TcpConn.Read(b)
+		if err != nil {
+			return nil, err
+		}
+		if b[0] == '$' {
+			continue
+		}
+		if b[0] == '\r' {
+			break
+		}
+		dataLen = dataLen*10 + int(b[0]-'0')
+	}
+	bf := bytes.Buffer{}
+	for i := 0; i < dataLen+3; i++ {
+		_, err := conn.TcpConn.Read(b)
+		if err != nil {
+			return nil, err
+		}
+		bf.Write(b)
+	}
+	return bf.Bytes()[1 : bf.Len()-2], nil
 }
 
 func mergeParams(params ...interface{}) ([]byte, error) {

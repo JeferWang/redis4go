@@ -36,6 +36,7 @@ type RedisConn struct {
 }
 
 type RedisResp struct {
-	respData []byte
-	respLen int
+	rType byte
+	rData [][]byte
+	rLen  int
 }
